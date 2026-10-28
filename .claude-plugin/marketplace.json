@@ -1,0 +1,5 @@
+{
+  "name": "barra-stato",
+  "owner": { "name": "fiumanamattia-web" },
+  "plugins": [{ "name": "barra-stato", "source": "./" }]
+}

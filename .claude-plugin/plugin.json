@@ -1,0 +1,6 @@
+{
+  "name": "barra-stato",
+  "version": "0.1.0",
+  "description": "Riquadro sotto il prompt: modello ed effort cliccabili, contesto verso l'autocompattazione, limiti 5h e 7g, task, skill in uso.",
+  "types": "./types/index.d.ts"
+}
