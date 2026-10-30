@@ -4,9 +4,10 @@ Mod per Claude Code: due riquadri sotto il prompt.
 
 **Riquadro principale**
 - modello ed effort, cliccabili per cambiarli;
+- advisor (`/advisor`): il modello più forte che il principale consulta nei passaggi complessi, cliccabile per scegliere Fable, Opus, Sonnet o spegnerlo;
 - contesto usato rispetto alla soglia di autocompattazione;
 - limiti di utilizzo a 5 ore e a 7 giorni, con il tempo al reset;
-- skill in uso, durata e token generati dell'ultimo turno.
+- skill in uso, durata e token generati dell'ultimo turno, con i consulti dell'advisor.
 
 **Riquadro del piano**, a destra
 - una riga per step: superati barrati e flaggati, in corso evidenziato, da fare in grigio;

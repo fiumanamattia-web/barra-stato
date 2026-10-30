@@ -6,6 +6,7 @@ import type { Misura, StatoTask, Task } from '../types'
 const misura = atom({ plugin: 'barra-stato', key: 'misura' } as const, null)
 const modello = atom({ plugin: 'barra-stato', key: 'modello' } as const, '')
 const effort = atom({ plugin: 'barra-stato', key: 'effort' } as const, '')
+const advisor = atom({ plugin: 'barra-stato', key: 'advisor' } as const, '')
 const skill = atom({ plugin: 'barra-stato', key: 'skill' } as const, null)
 const tasks = atom({ plugin: 'barra-stato', key: 'tasks' } as const, [] as Task[])
 const tick = atom({ plugin: 'barra-stato', key: 'tick' } as const, 0)
@@ -30,6 +31,10 @@ const MODELLI = [
 ] as const
 
 const SCELTE_MODELLO = MODELLI
+
+// /advisor accetta fable, opus e sonnet.
+const SCELTE_ADVISOR = MODELLI.filter(m => m.alias !== 'haiku')
+const COLORE_ADVISOR = '#f472b6'
 
 const EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const COLORI_EFFORT = ['#4ade80', '#a3e635', '#facc15', '#fb923c', '#f87171'] as const
@@ -175,6 +180,25 @@ function scegliModello($: EngineInterface, alias: string) {
   )
 }
 
+// L'advisor in uso è l'impostazione advisorModel, che /advisor scrive: vuota = spento.
+async function leggiAdvisor($: EngineInterface) {
+  const v = (await $.settings.read({ key: 'advisorModel' })) as unknown
+  await update($, advisor, () => (typeof v === 'string' ? v : ''))
+}
+
+function scegliAdvisor($: EngineInterface, alias: string) {
+  void update($, menu, () => null)
+  $.command.run({ command: 'advisor', args: alias }).then(
+    async () => {
+      await update($, advisor, () => (alias === 'off' ? '' : alias))
+      try {
+        await leggiAdvisor($)
+      } catch {}
+    },
+    (err: unknown) => $.ui.toast(`Cambio advisor non riuscito: ${String(err)}`),
+  )
+}
+
 function scegliEffort($: EngineInterface, livello: string) {
   void update($, menu, () => null)
   $.command.run({ command: 'effort', args: livello }).catch((err: unknown) =>
@@ -188,6 +212,9 @@ export const register: Register = on => {
     try {
       await impostaModello($, await $.session.model())
       await impostaEffort($, await effortDaSettings($, modelloAttivo))
+    } catch {}
+    try {
+      await leggiAdvisor($)
     } catch {}
     try {
       await $.tool.register({
@@ -240,13 +267,18 @@ export const register: Register = on => {
       const generati = r.usage.output_tokens
       await update($, turno, v => (v && v.attivo ? { ...v, uscita: v.uscita + generati } : v))
     }
+    // Consulti dell'advisor: il tool lo esegue l'API dentro la richiesta, si leggono a passo chiuso.
+    const consulti = (r.serverToolUses ?? []).filter(u => u.name === 'advisor').length
+    if (e.agentId === undefined && consulti > 0) {
+      await update($, turno, v => (v && v.attivo ? { ...v, consulti: (v.consulti ?? 0) + consulti } : v))
+    }
     return r
   })
 
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       const t = await $.clock.now()
-      await update($, turno, () => ({ inizio: t, fine: 0, uscita: 0, attivo: true }))
+      await update($, turno, () => ({ inizio: t, fine: 0, uscita: 0, attivo: true, consulti: 0 }))
       orologio?.cancel()
       orologio = $.clock.every(1000, () => void update($, tick, n => n + 1))
     }
@@ -263,6 +295,7 @@ export const register: Register = on => {
         fine: t,
         uscita: e.usage ? e.usage.output_tokens : (v?.uscita ?? 0),
         attivo: false,
+        consulti: v?.consulti ?? 0,
       }))
     }
     return next(e)
@@ -328,6 +361,14 @@ export const register: Register = on => {
     return r
   }).catch(($, e, next) => next(e))
 
+  on('command.run', { command: 'advisor' }, async ($, e, next) => {
+    const r = await next(e)
+    try {
+      await leggiAdvisor($)
+    } catch {}
+    return r
+  }).catch(($, e, next) => next(e))
+
   on('command.run', { command: 'effort' }, async ($, e, next) => {
     const r = await next(e)
     const livello = e.args.trim().toLowerCase()
@@ -337,10 +378,11 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     const { Box, Button, Text } = $.ui.resolve(e)
-    const [m, mod, eff, sk, ts, , tr, mn, est] = await Promise.all([
+    const [m, mod, eff, adv, sk, ts, , tr, mn, est] = await Promise.all([
       read($, misura),
       read($, modello),
       read($, effort),
+      read($, advisor),
       read($, skill),
       read($, tasks),
       read($, tick),
@@ -364,6 +406,7 @@ export const register: Register = on => {
     const f = famiglia(mod)
     const ie = EFFORT.indexOf(eff as (typeof EFFORT)[number])
     const coloreEffort = ie >= 0 ? COLORI_EFFORT[ie]! : '#9ca3af'
+    const nomeAdvisor = adv ? nomeModello(adv) : 'off'
 
     const base = m ? (m.soglia ?? m.finestra) : 0
     const pc = m?.tokens !== undefined && base > 0 ? m.tokens / base : undefined
@@ -401,7 +444,7 @@ export const register: Register = on => {
     const righe = [
       `CTX ${'x'.repeat(20)} ${pc === undefined ? '--%' : `${Math.round(pc * 100)}%`} ${dettaglio}`,
       `${testoLimite('five_hour', '5h')}   ${testoLimite('seven_day', '7g')}`,
-      ` ◆ ${nomeModello(mod)} ▸ ` + ` ✦ ${eff || '-'} ` + 'xxxxx' + ' ▸ ' + '  ' + (sk ? ` ⚙ ${sk} ` : 'no skill'),
+      ` ◆ ${nomeModello(mod)} ▸ ` + ` ✦ ${eff || '-'} ` + 'xxxxx' + ' ▸ ' + ` ⚑ advisor ${nomeAdvisor} ▸ ` + '   ' + (sk ? ` ⚙ ${sk} ` : 'no skill'),
     ]
     const larghezzaPrincipale = Math.max(...righe.map(r => r.length)) + 4 + AGGIUNTA_PRINCIPALE
 
@@ -476,6 +519,17 @@ export const register: Register = on => {
                 {' ▸ '}
               </Text>
             </Button>
+            <Button key="advisor" plain onPress={() => update($, menu, v => (v === 'advisor' ? null : 'advisor'))}>
+              {adv ? (
+                <Text backgroundColor={COLORE_ADVISOR} color="#111827" bold>
+                  {` ⚑ advisor ${nomeAdvisor} ▸ `}
+                </Text>
+              ) : (
+                <Text backgroundColor={FONDO_EFFORT} color="#9ca3af">
+                  {` ⚑ advisor off ▸ `}
+                </Text>
+              )}
+            </Button>
           </Box>
           {sk ? (
             <Text backgroundColor="#a21caf" color="#fdf4ff" bold>
@@ -495,6 +549,22 @@ export const register: Register = on => {
                 </Text>
               </Button>
             ))}
+          </Box>
+        ) : mn === 'advisor' ? (
+          <Box gap={1}>
+            <Text dimColor>advisor:</Text>
+            {SCELTE_ADVISOR.map(x => (
+              <Button key={`a-${x.alias}`} plain onPress={() => scegliAdvisor($, x.alias)}>
+                <Text backgroundColor={x.colore} color="#111827" bold>
+                  {` ${x.nome} `}
+                </Text>
+              </Button>
+            ))}
+            <Button key="a-off" plain onPress={() => scegliAdvisor($, 'off')}>
+              <Text backgroundColor={FONDO_EFFORT} color="#f9fafb" bold>
+                {' off '}
+              </Text>
+            </Button>
           </Box>
         ) : mn === 'effort' ? (
           <Box gap={1}>
@@ -531,6 +601,11 @@ export const register: Register = on => {
                   {`⏱ ${tr.attivo ? 'in corso' : 'ultimo'} ${durataTurno((tr.attivo ? adesso : tr.fine) - tr.inizio)}`}
                 </Text>
                 <Text color={tr.attivo ? '#22d3ee' : ETICHETTA}>{`↓ ${tok(tr.uscita)} token`}</Text>
+                {adv || (tr.consulti ?? 0) > 0 ? (
+                  <Text color={(tr.consulti ?? 0) > 0 ? COLORE_ADVISOR : SPENTO}>
+                    {`⚑ ${tr.consulti ?? 0} ${tr.consulti === 1 ? 'consulto' : 'consulti'}`}
+                  </Text>
+                ) : null}
               </>
             ) : (
               <Text dimColor>nessun turno</Text>
